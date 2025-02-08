@@ -1,0 +1,401 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggbeeswarm)
+library(readxl)
+library(tidyverse)
+
+housing_df <- read_csv("../data/eviction_data.csv",
+               col_types = cols(
+               `Executed Date` = col_date(format = "%m/%d/%Y")))
+
+```
+
+
+
+
+
+```{r}
+  # Convert points dataframe to sf object
+  points_sf_2024 <- st_as_sf(housing_df %>% filter(`Executed Date` >= '2024-01-01' & `Executed Date` < '2025-01-01' , 
+                                              !is.na(Longitude) ), 
+                       coords = c("Longitude", "Latitude"), 
+                       crs = st_crs(nyc_nta))
+  
+  points_sf_2023 <- st_as_sf(housing_df %>% filter(`Executed Date` >= '2023-01-01' & `Executed Date` < '2024-01-01' , 
+                                              !is.na(Longitude) ), 
+                       coords = c("Longitude", "Latitude"), 
+                       crs = st_crs(nyc_nta))
+  
+  # Perform spatial join and count points within each polygon
+  eviction_count <- nyc_nta %>%
+    mutate(points_count_2024 = lengths(st_intersects(., points_sf_2024)),
+           points_count_2023 = lengths(st_intersects(., points_sf_2023))) %>% 
+    mutate(diff = points_count_2024 - points_count_2023)
+```
+
+```{r}
+eviction_count %>% 
+  ggplot(aes(fill = diff))+ 
+  geom_sf(color = "lightgrey", size = 0.1) +
+  scale_fill_gradient2(name = "Increase in Evictions from 2023 to 2024") +
+  theme_void() +  
+  labs(
+    title = "Queens and Upper Manhattan experienced the largest\neviction increases in 2024",
+    subtitle = "Evictions across the city were up 12% since 2023",
+    caption = "Source: NYC Open Data"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    legend.title = element_text(vjust = .8, size = 12),
+    title =element_text(size=14)
+  ) + 
+  annotate("text", x = -74.25, y = 40.82, label = "Jamaica, Queens saw a 169% increase\nin evictions, the largest in the city", 
+           size = 4, color = "black",
+           hjust = 0) +
+  # Add arrow with a curve
+  geom_curve(aes(x = -74.10, y = 40.80, xend = -73.82, yend = 40.70), 
+             arrow = arrow(length = unit(0.1, "cm")), 
+             curvature = 0.2, color = "black", linewidth = .5) 
+
+ggsave("heat_map.png", height = 8, width = 8)
+```
+
+```{r}
+# Get centroids for arrow placement
+eviction_count_with_centroids <- eviction_count %>%
+  mutate(
+    centroid = st_centroid(geometry),
+    x = sf::st_coordinates(centroid)[,1],
+    y = sf::st_coordinates(centroid)[,2],
+    # Calculate arrow start/end points
+    # Adjust the scaling factor (0.001) to make arrows longer/shorter
+    arrow_length = abs(diff) * 0.0002,
+    x_end = case_when(
+      diff < 0 ~ x - arrow_length,
+      diff > 0 ~ x + arrow_length,
+      TRUE ~ x
+    ),
+    y_end = case_when(
+      diff > 0 ~ y + (x_end - x) * tan(pi/6),
+      diff < 0 ~ y - (x_end - x) * tan(pi/6),
+      TRUE ~ y
+    ),
+    show_arrow = diff != 0
+  )
+
+ggplot() +
+  # Base map layer
+  geom_sf(data = eviction_count_with_centroids, 
+          fill = "white", 
+          color = "gray80") +
+  # Add arrows
+  geom_segment(data = filter(eviction_count_with_centroids, show_arrow),
+              aes(x = x, 
+                  xend = x_end,
+                  y = y, 
+                  yend = y_end, 
+                  color = diff > 0),
+              arrow = arrow(length = unit(0.05, "cm")),
+              size = .5) +
+  # Customize colors
+  scale_color_manual(values = c("#1450D4", "#FE000D")) +
+  # Clean white background
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ) +
+  # Fix aspect ratio
+  coord_sf()
+
+ggsave("arrow_map.png", height = 8, width = 8)
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+```{r}
+library(sf)
+library(tigris)
+library(tidycensus)
+data(fips_codes)
+
+# Load NTA shapefile from NYC Open Data
+nta_url <- "https://data.cityofnewyork.us/resource/9nt8-h7nd.geojson"
+nyc_nta <- st_read(nta_url)
+
+ny_tracts <- tracts(state = "NY", year = 2022, class = "sf")
+
+# Filter for NYC counties (boroughs)
+nyc_counties <- c("Bronx County", "Kings County", "New York County", "Queens County", "Richmond County")
+
+county_codes <- fips_codes %>% 
+  filter(state == "NY",county %in% nyc_counties) %>% 
+  select(county_code)
+
+nyc_tracts <- ny_tracts %>% 
+  filter(COUNTYFP %in% county_codes$county_code)
+
+```
+
+```{r}
+diff_data <- housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  rename(neigh = NTA,
+         boro = BOROUGH) %>% 
+  filter(year %in% c(2023, 2024)) %>% 
+  group_by(year, neigh, boro) %>% 
+  summarize(count = n()) %>% 
+  pivot_wider(names_from = "year", values_from = "count") %>% 
+  mutate(diff = `2024`-`2023`) %>% 
+  replace_na(list(neigh = "No neighborhood", `2023` =0, `2024`=0))
+
+diff_data <- housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  rename(neigh = "Census Tract",
+         boro = BOROUGH) %>% 
+  filter(year %in% c(2023, 2024)) %>% 
+  group_by(year, neigh, boro) %>% 
+  summarize(count = n()) %>% 
+  pivot_wider(names_from = "year", values_from = "count") %>% 
+  mutate(diff = `2024`-`2023`,
+         neigh = as.character(neigh))
+```
+
+```{r}
+diff_data_mapped <- full_join(diff_data, nyc_tracts, join_by(neigh == NAME))
+```
+
+```{r}
+diff_data_mapped %>% 
+  ggplot(aes(fill = diff))+ 
+  geom_sf(color = NA, aes(geometry=geometry)) + 
+  theme_minimal()
+  
+```
+
+
+
+
+```{r}
+housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>% 
+  filter(year !=2025) %>% 
+  group_by(year) %>% 
+  summarize(count = n()) %>% 
+  ggplot(aes(x=year, y=count)) +
+  geom_line() + 
+  theme_minimal()
+```
+
+```{r}
+waterfall_data <- housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  rename(neigh = NTA,
+         boro = BOROUGH) %>% 
+  filter(year %in% c(2023, 2024)) %>% 
+  group_by(year, neigh, boro) %>% 
+  summarize(count = n()) %>% 
+  pivot_wider(names_from = "year", values_from = "count") %>% 
+  mutate(diff = `2024`-`2023`) %>% 
+  replace_na(list(neigh = "No neighborhood", `2023` =0, `2024`=0))
+  
+```
+
+```{r}
+waterfall_data %>% 
+  group_by(boro) %>% 
+  summarize(sum(`2024`),
+            sum(`2023`),
+            sum(diff),
+            (sum(`2024`) - sum(`2023`)) / sum(`2023`))
+```
+
+
+```{r}
+waterfall_data %>%
+  ungroup() %>% 
+  filter(neigh != "No neighborhood") %>% 
+  arrange((`2023`)) %>%
+  slice_max(`2023`, n = 25) %>% 
+  group_by(ifelse(diff>0, "pos", "neg")) %>% tally()
+```
+
+
+```{r}
+waterfall_data %>%
+  ungroup() %>% 
+  filter(neigh != "No neighborhood") %>% 
+  arrange((`2023`)) %>%
+  slice_max(`2023`, n = 25) %>% 
+  mutate(neigh = factor(neigh, levels = rev(unique(.$neigh)))) %>%
+  mutate(pos_change = ifelse(diff > 0, `2024`, NA_real_),
+         neg_change = ifelse(diff < 0, `2024`, NA_real_)) %>% 
+  ggplot() + 
+  geom_segment(aes(x = neigh, xend = neigh, y = `2023`, yend = `2024`), color = "grey") +
+  geom_point(aes(x = neigh, y = `2023`), color = "grey", size = 3) +
+  geom_point(aes(x = neigh, y = pos_change), color = "blue", size = 3) +
+  geom_point(aes(x = neigh, y = neg_change), color = "red", size = 3) +
+
+  labs(title = "2024 Evictions Rose in NYC Eviction Hotspots",
+       subtitle = "In the 25 neighborhoods with the highest number of 2023 evictions,\n20 increased last year",
+       color = "Legend") +
+  coord_flip() +
+  theme_minimal() +
+  ylab("Number of Evictions") + 
+  theme(panel.grid.minor.y = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.title.y = element_blank(),
+        legend.position = "right") +
+  scale_color_manual(values = c("2023" = "grey", 
+                                "Positive Change" = "blue", 
+                                "Negative Change" = "red"))
+
+```
+
+
+
+```{r}
+waterfall_data %>%
+  ungroup() %>% 
+  filter(neigh != "No neighborhood") %>% 
+  arrange((`2023`)) %>%
+  slice_max(`2023`, n = 25) %>% 
+  mutate(neigh = factor(neigh, levels = rev(unique(.$neigh)))) %>%
+  mutate(pos_change = ifelse(diff > 0, diff, NA_real_),
+         neg_change = ifelse(diff < 0, diff, NA_real_)) %>% 
+  ggplot() + 
+  geom_segment(aes(x = neigh, xend = neigh, y =  0 , yend = diff), color = "grey") +
+  geom_point(aes(x = neigh, y = pos_change), color = "blue", size = 3) +
+  geom_point(aes(x = neigh, y = neg_change), color = "red", size = 3) +
+
+  labs(title = "Evictions in 2024 Rose Across New York City",
+       subtitle = "In the top 25 neighborhoods for 2023 evictions, 20 showed increaeses \nin evictions last year",
+       color = "Legend") +
+  coord_flip() +
+  theme_minimal() +
+  ylab("Number of Evictions") + 
+  theme(panel.grid.minor.y = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.title.y = element_blank(),
+        legend.position = "right") +
+  scale_color_manual(values = c("2023" = "grey", 
+                                "Positive Change" = "blue", 
+                                "Negative Change" = "red"))
+```
+
+```{r}
+waterfall_data %>%
+  ungroup() %>% 
+  filter(neigh != "No neighborhood") %>% 
+  arrange((`2023`)) %>%
+  slice_max(`2023`, n = 25) %>% 
+  mutate(neigh = factor(neigh, levels = rev(unique(.$neigh)))) %>%
+  mutate(pos_change = ifelse(diff > 0, diff / `2023`, NA_real_),
+         neg_change = ifelse(diff < 0, diff / `2023`, NA_real_)) %>% 
+  ggplot() + 
+  geom_segment(aes(x = neigh, xend = neigh, y =  0 , yend = diff / `2023`), color = "grey") +
+  geom_point(aes(x = neigh, y = 0), color = "grey", size = 3) +
+  geom_point(aes(x = neigh, y = pos_change), color = "blue", size = 3) +
+  geom_point(aes(x = neigh, y = neg_change), color = "red", size = 3) +
+  labs(title = "Evictions in 2024 Rose Across New York City",
+       subtitle = "In the top 25 neighborhoods for 2023 evictions, 20 showed increaeses \nin evictions last year",
+       color = "Legend") +
+  coord_flip() +
+  theme_minimal() +
+  ylab("Number of Evictions") + 
+  theme(panel.grid.minor.y = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.title.y = element_blank(),
+        legend.position = "right") +
+  scale_color_manual(values = c("2023" = "grey", 
+                                "Positive Change" = "blue", 
+                                "Negative Change" = "red"))
+```
+
+```{r}
+library(waterfalls)
+waterfall(waterfall_data %>% select(neigh, diff))
+
+```
+
+
+
+```{r}
+
+df %>%
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  filter(year >= 2022, 
+         year < 2025,
+         !is.na(NTA)) %>%
+  group_by(year, NTA) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  group_by(NTA) %>%
+  mutate(relative_count = count / max(count)) %>%
+  ggplot(aes(x = year, y = count, group = NTA)) +
+  geom_line() +
+  theme_minimal()
+
+```
+
+```{r}
+yearly_data <- df %>%
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  group_by(year, NTA) %>%   
+  summarize(count = n(), .groups = "drop") 
+
+  
+
+yearly_data_2022 <- df %>%
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  filter(year == 2022) %>% 
+  group_by(NTA)  %>% 
+  summarize(count_2022 = n(), .groups = "drop")  %>% 
+  select(NTA, count_2022)
+
+
+relative <- yearly_data %>% 
+  filter(year >= 2022, year < 2025, !is.na(NTA)) %>%
+  mutate(relative_count = count / count_2022) 
+
+relative %>% 
+  arrange(desc(count))
+
+relative %>% 
+  filter(count_2022 >= 10) %>% 
+  arrange(desc(relative_count))
+
+yearly_data %>% 
+  filter(NTA == "Astoria")
+  
+
+relative %>% 
+  filter(count_2022 > 10) %>% 
+  ggplot(aes(x = year, y = relative_count, group = NTA)) +
+  geom_line() +
+  geom_line(data = relative %>% filter(NTA=="Far Rockaway-Bayswater"), aes(x = year, y = relative_count), color = 'red') +
+  theme_minimal()
+```
+```{r}
+relative %>% 
+  filter(count_2022 > 10) %>% 
+  ggplot(aes(x = year, y = count, group = NTA)) +
+  geom_line() +
+  geom_line(data = relative %>% filter(NTA=="Far Rockaway-Bayswater"), aes(x = year, y = count), color = 'red') +
+  geom_line(data = relative %>% filter(NTA=="Mount Hope"), aes(x = year, y = count), color = 'blue') +
+
+  theme_minimal()
+```
+
