@@ -1,7 +1,10 @@
+# creates arrow charts of eviction hot spots
+
+# library
 library(tidyverse)
 
 # read in data
-housing_df <- read_csv("nyc_evictions.csv",
+housing_df <- read_csv("data/nyc_evictions.csv",
                        col_types = cols(
                          `Executed Date` = col_date(format = "%m/%d/%Y")))
 
@@ -58,4 +61,4 @@ clev_data %>%
     "Increase from 2023 to 2024" = "#4E94D2", 
     "Decrease from 2023 to 2024" = "#FF295D"))
 
-ggsave("evictions.png", height = 6, width = 8)
+ggsave("img/evictions.png", height = 6, width = 8)

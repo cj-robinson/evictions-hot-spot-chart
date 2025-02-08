@@ -8,12 +8,184 @@ library(ggbeeswarm)
 library(readxl)
 library(tidyverse)
 
-housing_df <- read_csv("/Users/cjrobinson/Downloads/Evictions_20250129.csv",
+housing_df <- read_csv("../data/eviction_data.csv",
                col_types = cols(
                `Executed Date` = col_date(format = "%m/%d/%Y")))
 
-tabulation_area <- read_csv("/Users/cjrobinson/Downloads/2010_Census_Tract_to_Neighborhood_Tabulation_Area_Equivalency_table_20250129.csv")
 ```
+
+
+
+
+
+```{r}
+  # Convert points dataframe to sf object
+  points_sf_2024 <- st_as_sf(housing_df %>% filter(`Executed Date` >= '2024-01-01' & `Executed Date` < '2025-01-01' , 
+                                              !is.na(Longitude) ), 
+                       coords = c("Longitude", "Latitude"), 
+                       crs = st_crs(nyc_nta))
+  
+  points_sf_2023 <- st_as_sf(housing_df %>% filter(`Executed Date` >= '2023-01-01' & `Executed Date` < '2024-01-01' , 
+                                              !is.na(Longitude) ), 
+                       coords = c("Longitude", "Latitude"), 
+                       crs = st_crs(nyc_nta))
+  
+  # Perform spatial join and count points within each polygon
+  eviction_count <- nyc_nta %>%
+    mutate(points_count_2024 = lengths(st_intersects(., points_sf_2024)),
+           points_count_2023 = lengths(st_intersects(., points_sf_2023))) %>% 
+    mutate(diff = points_count_2024 - points_count_2023)
+```
+
+```{r}
+eviction_count %>% 
+  ggplot(aes(fill = diff))+ 
+  geom_sf(color = "lightgrey", size = 0.1) +
+  scale_fill_gradient2(name = "Increase in Evictions from 2023 to 2024") +
+  theme_void() +  
+  labs(
+    title = "Queens and Upper Manhattan experienced the largest\neviction increases in 2024",
+    subtitle = "Evictions across the city were up 12% since 2023",
+    caption = "Source: NYC Open Data"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),
+    legend.title = element_text(vjust = .8, size = 12),
+    title =element_text(size=14)
+  ) + 
+  annotate("text", x = -74.25, y = 40.82, label = "Jamaica, Queens saw a 169% increase\nin evictions, the largest in the city", 
+           size = 4, color = "black",
+           hjust = 0) +
+  # Add arrow with a curve
+  geom_curve(aes(x = -74.10, y = 40.80, xend = -73.82, yend = 40.70), 
+             arrow = arrow(length = unit(0.1, "cm")), 
+             curvature = 0.2, color = "black", linewidth = .5) 
+
+ggsave("heat_map.png", height = 8, width = 8)
+```
+
+```{r}
+# Get centroids for arrow placement
+eviction_count_with_centroids <- eviction_count %>%
+  mutate(
+    centroid = st_centroid(geometry),
+    x = sf::st_coordinates(centroid)[,1],
+    y = sf::st_coordinates(centroid)[,2],
+    # Calculate arrow start/end points
+    # Adjust the scaling factor (0.001) to make arrows longer/shorter
+    arrow_length = abs(diff) * 0.0002,
+    x_end = case_when(
+      diff < 0 ~ x - arrow_length,
+      diff > 0 ~ x + arrow_length,
+      TRUE ~ x
+    ),
+    y_end = case_when(
+      diff > 0 ~ y + (x_end - x) * tan(pi/6),
+      diff < 0 ~ y - (x_end - x) * tan(pi/6),
+      TRUE ~ y
+    ),
+    show_arrow = diff != 0
+  )
+
+ggplot() +
+  # Base map layer
+  geom_sf(data = eviction_count_with_centroids, 
+          fill = "white", 
+          color = "gray80") +
+  # Add arrows
+  geom_segment(data = filter(eviction_count_with_centroids, show_arrow),
+              aes(x = x, 
+                  xend = x_end,
+                  y = y, 
+                  yend = y_end, 
+                  color = diff > 0),
+              arrow = arrow(length = unit(0.05, "cm")),
+              size = .5) +
+  # Customize colors
+  scale_color_manual(values = c("#1450D4", "#FE000D")) +
+  # Clean white background
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ) +
+  # Fix aspect ratio
+  coord_sf()
+
+ggsave("arrow_map.png", height = 8, width = 8)
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+```{r}
+library(sf)
+library(tigris)
+library(tidycensus)
+data(fips_codes)
+
+# Load NTA shapefile from NYC Open Data
+nta_url <- "https://data.cityofnewyork.us/resource/9nt8-h7nd.geojson"
+nyc_nta <- st_read(nta_url)
+
+ny_tracts <- tracts(state = "NY", year = 2022, class = "sf")
+
+# Filter for NYC counties (boroughs)
+nyc_counties <- c("Bronx County", "Kings County", "New York County", "Queens County", "Richmond County")
+
+county_codes <- fips_codes %>% 
+  filter(state == "NY",county %in% nyc_counties) %>% 
+  select(county_code)
+
+nyc_tracts <- ny_tracts %>% 
+  filter(COUNTYFP %in% county_codes$county_code)
+
+```
+
+```{r}
+diff_data <- housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  rename(neigh = NTA,
+         boro = BOROUGH) %>% 
+  filter(year %in% c(2023, 2024)) %>% 
+  group_by(year, neigh, boro) %>% 
+  summarize(count = n()) %>% 
+  pivot_wider(names_from = "year", values_from = "count") %>% 
+  mutate(diff = `2024`-`2023`) %>% 
+  replace_na(list(neigh = "No neighborhood", `2023` =0, `2024`=0))
+
+diff_data <- housing_df %>% 
+  mutate(year = lubridate::year(`Executed Date`)) %>%
+  rename(neigh = "Census Tract",
+         boro = BOROUGH) %>% 
+  filter(year %in% c(2023, 2024)) %>% 
+  group_by(year, neigh, boro) %>% 
+  summarize(count = n()) %>% 
+  pivot_wider(names_from = "year", values_from = "count") %>% 
+  mutate(diff = `2024`-`2023`,
+         neigh = as.character(neigh))
+```
+
+```{r}
+diff_data_mapped <- full_join(diff_data, nyc_tracts, join_by(neigh == NAME))
+```
+
+```{r}
+diff_data_mapped %>% 
+  ggplot(aes(fill = diff))+ 
+  geom_sf(color = NA, aes(geometry=geometry)) + 
+  theme_minimal()
+  
+```
+
 
 
 
@@ -41,6 +213,16 @@ waterfall_data <- housing_df %>%
   replace_na(list(neigh = "No neighborhood", `2023` =0, `2024`=0))
   
 ```
+
+```{r}
+waterfall_data %>% 
+  group_by(boro) %>% 
+  summarize(sum(`2024`),
+            sum(`2023`),
+            sum(diff),
+            (sum(`2024`) - sum(`2023`)) / sum(`2023`))
+```
+
 
 ```{r}
 waterfall_data %>%
