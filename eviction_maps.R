@@ -77,7 +77,7 @@ eviction_count_with_centroids <- eviction_count %>%
     ),
     y_end = case_when(
       diff > 0 ~ y + (x_end - x) * tan(pi/6),
-      diff < 0 ~ y - (x_end - x) * tan(pi/6),
+      diff < 0 ~ y + 2 *((x_end - x) * tan(pi/12)),
       TRUE ~ y
     ),
     show_arrow = diff != 0
@@ -94,22 +94,29 @@ ggplot() +
                    xend = x_end,
                    y = y, 
                    yend = y_end, 
-                   color = diff > 0),
+                   color = ifelse(diff > 0, "Increase", "Decrease"), 
+                   alpha = abs(diff) + .2),
                arrow = arrow(length = unit(0.05, "cm")),
                size = .5) +
-  scale_color_manual(values = c("#1450D4", "#FE000D")) +
+  scale_color_manual(values = c("#009e73","#d55e00"), name = "Change in Evictions (2023 to 2024)") +
   theme_void() +
   theme(
     panel.background = element_rect(fill = "white", color = NA),
     panel.grid = element_blank(),
-    legend.position = "none"
+    legend.position = "bottom",
+    legend.key.width = unit(2, "cm"),  
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    plot.caption = element_text(size = 8),
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    plot.subtitle = element_text(hjust = 0.5)  # Center the subtitle
   ) +  
+  scale_alpha(range = c(0.3, 1), guide = "none") +  # Opacity legend removed for simplicity
   labs(
-    title = "Queens and Upper Manhattan experienced the largest\neviction increases in 2024",
-    subtitle = "Evictions across the city were up 12% since 2023",
+    title = "Evictions Surge Across New York City,\nwith Queens Seeing the Sharpest Increase",
+    subtitle = "Change in number of evictions by neighborhood tabulation area,\nwith longer/darker arrows representing more evictions",
     caption = "Source: NYC Open Data"
   ) +
-  # Fix aspect ratio
-  coord_sf()
+  coord_sf() 
 
-ggsave("img/arrow_map.png", height = 8, width = 8)
+ggsave("img/arrow_map.png", height = 7, width = 7)

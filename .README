@@ -1,0 +1,8 @@
+# Overview
+---
+This repo contains code for several ggplot charts examining the increase of evictions from 2023 to 2024. 
+
+# Files
+----
+-*eviction_maps.R* - creates chloropleth and election-arrow style maps
+-*eviction_arrow_chart.R* - creates arrow chart of individual neighborhood increase -- not mapped
