@@ -62,6 +62,7 @@ ggsave("img/heat_map.png", height = 8, width = 8)
 
 # ----
 # generate election-style arrow map
+
 eviction_count_with_centroids <- eviction_count %>%
   mutate(
     centroid = st_centroid(geometry),
@@ -119,4 +120,126 @@ ggplot() +
   ) +
   coord_sf() 
 
+
+ggplot() +
+  # base map layer
+  geom_sf(data = eviction_count_with_centroids,  
+          fill = "white", 
+          color = "gray80") + 
+  # add triangular peaks
+  geom_polygon(data = 
+                 do.call(rbind, lapply(1:nrow(filter(eviction_count_with_centroids, show_arrow)), function(i) {
+    row <- filter(eviction_count_with_centroids, show_arrow)[i,]
+    data.frame(
+      x = c(row$x - 0.002, row$x, row$x + 0.002),
+      y = c(row$y, row$y + (row$diff)/4000, row$y),
+      id = i,
+      diff = row$diff
+    )
+  })),
+  aes(x = x, y = y, group = id, fill = ifelse(diff > 0, "Increase", "Decrease")),
+  size = 0.5, 
+  alpha = 1) +
+  scale_fill_manual(values = c("#009e73", "#d55e00"), 
+                    name = "Change in Evictions (2023 to 2024)",
+                    ) +
+  theme_void() + 
+  theme(
+    panel.background = element_rect(fill = "white", color = NA), 
+    panel.grid = element_blank(), 
+    legend.position = "bottom", 
+    legend.key.width = unit(2, "cm"),  
+    legend.title = element_text(size = 8), 
+    legend.text = element_text(size = 8), 
+    plot.caption = element_text(size = 8), 
+    plot.title = element_text(hjust = 0),
+    plot.subtitle = element_text(hjust = 0)
+  ) +  
+  scale_alpha(range = c(0.3, 1), guide = "none") +
+  labs(
+    title = "Evictions Surged Across New York City in 2024,\nwith Queens and Upper Manhattan Seeing the Sharpest Increase", 
+    subtitle = "Change in number of evictions by neighborhood tabulation area,\nwith longer/darker arrows representing more evictions", 
+    caption = "Source: NYC Open Data"
+  ) + 
+  coord_sf() +
+  annotate("text", x = -74.25, y = 40.82, label = "Jamaica, Queens saw the highest rise in evictions\nwith a 169% increase", 
+           size = 4, color = "black",
+           hjust = 0) +
+  # Add arrow with a curve
+  geom_curve(aes(x = -74.11, y = 40.80, xend = -73.80, yend = 40.71), 
+             arrow = arrow(length = unit(0.1, "cm")), 
+             curvature = 0.2, color = "black", linewidth = .2) 
+
 ggsave("img/arrow_map.png", height = 7, width = 7)
+
+# ----
+# generate election-style peak map
+
+
+ggplot() +
+  # base map layer
+  geom_sf(data = eviction_count_with_centroids,  
+          fill = "white", 
+          color = "gray80") + 
+  # add triangular peaks
+  geom_polygon(data = 
+                 do.call(rbind, lapply(1:nrow(filter(eviction_count_with_centroids, show_arrow)), function(i) {
+                   row <- filter(eviction_count_with_centroids, show_arrow)[i,]
+                   data.frame(
+                     x = c(row$x - 0.002, row$x, row$x + 0.002),
+                     y = c(row$y, row$y + (row$diff)/4000, row$y),
+                     id = i,
+                     diff = row$diff
+                   )
+                 })),
+               aes(x = x, y = y, group = id, fill = ifelse(diff > 0, "Increase", "Decrease"), color = ifelse(diff > 0, "Increase", "Decrease" )),
+               linewidth = .2,
+               alpha = .5,
+               show.legend = FALSE) + # Hide the polygon legend
+  # Add dummy point layer just for legend
+  geom_point(data = data.frame(
+    x = NA_real_,
+    y = NA_real_,
+    change = factor(c("Increase", "Decrease"))
+  ),
+  aes(x = x, y = y, fill = change, color = change, shape = change),
+  size = 3,
+  alpha = .5,
+  show.legend = TRUE) +
+  scale_shape_manual(values = c("Increase" = 24, "Decrease" = 25), 
+                     name = "Change in Evictions\n(2023 to 2024)", 
+                     guide = "legend") +
+  scale_color_manual(values = c("#009e73", "#d55e00"), 
+                    name = "Change in Evictions\n(2023 to 2024)") +
+  scale_fill_manual(values = c("#009e73", "#d55e00"), 
+                    name = "Change in Evictions\n(2023 to 2024)") +
+  theme_void() + 
+  theme(
+    panel.background = element_rect(fill = "white", color = NA), 
+    panel.grid = element_blank(), 
+    legend.position = "bottom", 
+    legend.key.width = unit(2, "cm"),  
+    legend.title = element_text(size = 8), 
+    legend.text = element_text(size = 8), 
+    plot.caption = element_text(size = 8), 
+    plot.title = element_text(hjust = 0),
+    plot.subtitle = element_text(hjust = 0)
+  ) +  
+  scale_alpha(range = c(0.3, 1), guide = "none") +
+  labs(
+    title = "Evictions Surged Across New York City in 2024,\nwith Queens and Upper Manhattan Seeing the Sharpest Increase", 
+    subtitle = "Change in number of evictions by neighborhood tabulation area,\nwith longer peaks representing more evictions", 
+    caption = "Source: NYC Open Data"
+  ) + 
+  coord_sf() +
+  annotate("text", x = -74.3, y = 40.81, label =  "Jamaica, Queens saw 135 more evictions (a 169%\nincrease) compared to 2023, the highest citywide",
+           size = 3, color = "black",
+           hjust = 0) +
+  # Add arrow with a curve
+  geom_curve(aes(x = -74.11, y = 40.79, xend = -73.80, yend = 40.71), 
+             arrow = arrow(length = unit(0.1, "cm")), 
+             curvature = 0.2, color = "black", linewidth = .1) 
+
+
+
+ggsave("img/peak_map.png", height = 7, width = 7)
